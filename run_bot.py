@@ -1,11 +1,10 @@
 import requests
-import re
 import os
 import json
 import random
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup
 from zoneinfo import ZoneInfo
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -18,15 +17,32 @@ from dateutil.parser import parse
 
 load_dotenv()
 
+# Startup validation
+REQUIRED_ENV_VARS = [
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_CHAT_ID",
+    "GOOGLE_SERVICE_ACCOUNT_JSON",
+    "GOOGLE_DRIVE_FOLDER_ID",
+]
+missing = [v for v in REQUIRED_ENV_VARS if not os.getenv(v)]
+if missing:
+    print(f"❌ Missing required env vars: {', '.join(missing)}")
+    exit(1)
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 POSTED_GAMES_FILE = "posted_games.txt"
-COPY_LINES = json.load(open("copy_bank.json"))['lines']
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+TEAM_ID = int(os.getenv("TEAM_ID", "137"))
+FORCE_POST = os.getenv("FORCE_POST", "false").lower() == "true"
+NO_GAME_CUTOFF_HOUR = int(os.getenv("NO_GAME_CUTOFF_HOUR", "9"))  # UK time
 
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
 EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
+
+with open("copy_bank.json") as f:
+    COPY_LINES = json.load(f)['lines']
 
 def get_drive_service():
     creds_dict = json.loads(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON"))
@@ -66,8 +82,11 @@ def get_recent_gamepks(team_id=137):
     start_date = (now_uk - timedelta(days=7)).strftime("%Y-%m-%d")
     end_date = (now_uk + timedelta(days=1)).strftime("%Y-%m-%d")
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId={team_id}&startDate={start_date}&endDate={end_date}"
-    r = requests.get(url)
-    data = r.json()
+    res = fetch_with_retry(url, timeout=10)
+    if res is None:
+        print("❌ Could not fetch MLB schedule")
+        return []
+    data = res.json()
     games = []
     for date in data["dates"]:
         for game in date["games"]:
@@ -82,34 +101,42 @@ def already_posted(gamepk):
     if not os.path.exists(POSTED_GAMES_FILE):
         return False
     with open(POSTED_GAMES_FILE, "r") as f:
-        return str(gamepk) in f.read()
+        return str(gamepk) in f.read().splitlines()
 
 def mark_as_posted(gamepk):
     with open(POSTED_GAMES_FILE, "a") as f:
         f.write(f"{gamepk}\n")
 
+def fetch_with_retry(url, retries=3, backoff=2, **kwargs):
+    for attempt in range(retries):
+        try:
+            res = requests.get(url, **kwargs)
+            if res.status_code == 200:
+                return res
+            print(f"⚠️ HTTP {res.status_code} for {url} (attempt {attempt + 1})")
+        except Exception as e:
+            print(f"⚠️ Request error: {e} (attempt {attempt + 1})")
+        if attempt < retries - 1:
+            time.sleep(backoff)
+    return None
+
 def find_condensed_game(gamepk):
     url = f"https://statsapi.mlb.com/api/v1/game/{gamepk}/content"
     print(f"🔍 Checking MLB content API: {url}")
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code != 200:
-            print(f"⚠️ HTTP {res.status_code} for {url}")
-            return None, None
-
-        data = res.json()
-        items = data.get("highlights", {}).get("highlights", {}).get("items", [])
-        for item in items:
-            title = item.get("title", "").lower()
-            desc = item.get("description", "").lower()
-            if "condensed" in title or "condensed" in desc:
-                for playback in item.get("playbacks", []):
-                    if "mp4" in playback.get("name", "").lower():
-                        return item["title"], playback["url"]
+    res = fetch_with_retry(url, timeout=10)
+    if res is None:
+        print(f"❌ Failed to fetch content for {gamepk}")
         return None, None
-    except Exception as e:
-        print(f"❌ Exception while calling content API: {e}")
-        return None, None
+    data = res.json()
+    items = data.get("highlights", {}).get("highlights", {}).get("items", [])
+    for item in items:
+        title = item.get("title", "").lower()
+        desc = item.get("description", "").lower()
+        if "condensed" in title or "condensed" in desc:
+            for playback in item.get("playbacks", []):
+                if "mp4" in playback.get("name", "").lower():
+                    return item["title"], playback["url"]
+    return None, None
 
 def send_telegram_message(title, url):
     game_info = title.replace("Condensed Game: ", "").strip()
@@ -119,16 +146,21 @@ def send_telegram_message(title, url):
         f"🎥 <a href=\"{url}\">▶ Watch Condensed Game</a>\n\n"
         f"<i>{random.choice(COPY_LINES)}</i>"
     )
-    res = requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True
-        }
-    )
-    return res.ok
+    try:
+        res = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            },
+            timeout=10
+        )
+        return res.ok
+    except Exception as e:
+        print(f"❌ Telegram send failed: {e}")
+        return False
 
 def send_email(title, url):
     if not (EMAIL_ADDRESS and EMAIL_PASSWORD and EMAIL_RECIPIENT):
@@ -136,34 +168,33 @@ def send_email(title, url):
         return False
     try:
         recipients = [addr.strip() for addr in EMAIL_RECIPIENT.split(",") if addr.strip()]
-        success = True
+        success = False
 
-        for recipient in recipients:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = title
-            msg["From"] = EMAIL_ADDRESS
-            msg["To"] = recipient
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            for recipient in recipients:
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = title
+                msg["From"] = EMAIL_ADDRESS
+                msg["To"] = recipient
 
-            text = f"{title}\n\nWatch here: {url}"
-            html = f"""\
-            <html>
-                <body>
-                    <h3>{title}</h3>
-                    <p><a href="{url}">▶ Watch Condensed Game</a></p>
-                    <p><i>{random.choice(COPY_LINES)}</i></p>
-                </body>
-            </html>
-            """
+                text = f"{title}\n\nWatch here: {url}"
+                html = f"""\
+                <html>
+                    <body>
+                        <h3>{title}</h3>
+                        <p><a href="{url}">▶ Watch Condensed Game</a></p>
+                        <p><i>{random.choice(COPY_LINES)}</i></p>
+                    </body>
+                </html>
+                """
 
-            msg.attach(MIMEText(text, "plain"))
-            msg.attach(MIMEText(html, "html"))
-
-            with smtplib.SMTP("smtp.gmail.com", 587) as server:
-                server.starttls()
-                server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+                msg.attach(MIMEText(text, "plain"))
+                msg.attach(MIMEText(html, "html"))
                 server.sendmail(EMAIL_ADDRESS, recipient, msg.as_string())
-
-            print(f"✅ Email sent to {recipient}")
+                print(f"✅ Email sent to {recipient}")
+                success = True
 
         return success
     except Exception as e:
@@ -173,15 +204,18 @@ def send_email(title, url):
 
 def main():
     print("🎬 Condensed Game Bot (GitHub Actions version)")
+    if FORCE_POST:
+        print("⚡ FORCE_POST mode enabled — skipping already-posted check")
     drive = get_drive_service()
     download_posted_file(drive, POSTED_GAMES_FILE)
 
-    gamepks = get_recent_gamepks()
+    gamepks = get_recent_gamepks(team_id=TEAM_ID)
     print(f"🧾 Found {len(gamepks)} recent Giants games")
 
+    posted = False
     for gamepk in gamepks:
         print(f"🎬 Checking gamePk: {gamepk}")
-        if already_posted(gamepk):
+        if not FORCE_POST and already_posted(gamepk):
             print("⏩ Already posted")
             continue
 
@@ -193,11 +227,26 @@ def main():
                 mark_as_posted(gamepk)
                 upload_posted_file(drive, POSTED_GAMES_FILE)
                 print("✅ Posted to Telegram and/or emailed")
+                posted = True
             else:
                 print("⚠️ Message failed to send anywhere")
             break
         else:
             print(f"❌ No condensed game found for {gamepk}")
+
+    if not posted and gamepks:
+        now_uk = datetime.now(ZoneInfo("Europe/London"))
+        if now_uk.hour >= NO_GAME_CUTOFF_HOUR:
+            print(f"⏰ Past {NO_GAME_CUTOFF_HOUR}:00 UK time with no game posted — sending alert")
+            alert = "⚠️ Breakfast bot: past cutoff time and no condensed game found. Check MLB highlights manually."
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    data={"chat_id": TELEGRAM_CHAT_ID, "text": alert},
+                    timeout=10
+                )
+            except Exception as e:
+                print(f"❌ Alert send failed: {e}")
 
 if __name__ == "__main__":
     main()

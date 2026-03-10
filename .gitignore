@@ -1,0 +1,4 @@
+.env
+posted_games.txt
+__pycache__/
+*.pyc

@@ -2,7 +2,7 @@ name: Breakfast Bot
 
 on:
   schedule:
-    - cron: '*/5 5-8 * * *'  # Every 5 minutes from 6:00 to 8:59 UK time
+    - cron: '*/5 5-8 * * *'  # Every 5 minutes, 05:00–08:59 UTC (06:00–09:59 BST in summer, 05:00–08:59 GMT in winter)
   workflow_dispatch:
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-      GOOGLE_DRIVE_FOLDER_ID: 11QV7pggur2rI0AM2cKfhAOswtFTZgM42
+      GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
       EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
       EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
       EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
@@ -28,9 +28,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+        run: pip install -r requirements.txt
 
       - name: Run Breakfast Bot
         run: python run_bot.py

@@ -1,6 +1,6 @@
 requests
 python-dotenv
-beautifulsoup4
+tzdata
 google-api-python-client
 google-auth
 google-auth-httplib2
