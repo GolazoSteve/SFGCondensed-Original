@@ -156,3 +156,9 @@ Removed Google Drive as the state persistence mechanism. `posted_games.txt` is n
 
 ### copy_bank.json expanded
 Grew the quip pool from ~237 lines to exactly 500. New lines are all SF Giants / San Francisco themed — covering the three-peat, specific players and moments (Lincecum, Cain's perfect game, MadBum Game 7, Scutaro, Pence, Belt's 21-pitch AB), broadcasters (Miller, Kruk & Kuip), Oracle Park, SF neighbourhoods, local food, and the city's baseball identity.
+
+### Remote URL updated
+Updated git remote from `GolazoSteve/SFGCondensed` (redirected) to `GolazoSteve/SFGCondensed-Original` (canonical).
+
+### SaaS repo created
+New repo `GolazoSteve/morning-lineup` at `C:\Users\Steve\DevSandbox\morning-lineup`. Contains `README.md` and `plan.md`. This is where the multi-team SaaS build (Phases 3–5) will happen — Next.js web app, Supabase, adapted Python bot.
