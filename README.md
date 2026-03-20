@@ -9,7 +9,7 @@ A bot that automatically finds and delivers SF Giants condensed game highlights 
 3. Sends a Telegram message and/or email with a link to watch
 4. Logs the game ID to avoid duplicate posts across runs
 
-State is persisted via Google Drive, which allows the stateless GitHub Actions runner to remember which games have already been posted.
+State is persisted by committing `posted_games.txt` back to the repo after each successful post, using the built-in `GITHUB_TOKEN`. No external storage required.
 
 ## Setup
 
@@ -27,8 +27,6 @@ Create a `.env` file (for local runs) or set GitHub Actions secrets:
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
 | `TELEGRAM_CHAT_ID` | Target chat or channel ID |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Full JSON string of a Google service account with Drive access |
-| `GOOGLE_DRIVE_FOLDER_ID` | ID of the Drive folder used to store `posted_games.txt` |
 | `EMAIL_ADDRESS` | Gmail address to send from |
 | `EMAIL_APP_PASSWORD` | Gmail app password |
 | `EMAIL_RECIPIENT` | Recipient email(s), comma-separated |
@@ -52,5 +50,5 @@ A second workflow (`manual_force_check.yml`) is available for manual dispatch if
 | File | Purpose |
 |---|---|
 | `run_bot.py` | Main bot script |
-| `copy_bank.json` | Pool of ~230 baseball/coffee quips used in messages |
-| `posted_games.txt` | Log of already-posted game IDs (synced via Google Drive) |
+| `copy_bank.json` | Pool of 500 SF Giants/San Francisco quips used in messages |
+| `posted_games.txt` | Log of already-posted game IDs (committed back to repo after each post) |
