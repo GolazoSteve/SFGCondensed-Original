@@ -1,5 +1,12 @@
 # SFGCondensed Lab Notes
 
+## 2026-04-04
+- Diagnosed bug: past-cutoff alert ("⚠️ Breakfast bot: past cutoff time...") was firing on every run after 9 AM UK time, even on days when a condensed game had already been posted
+- Root cause: in `main()`, when `already_posted(gamepk)` returned `True`, the loop used `continue`, leaving `posted = False` — so the cutoff check always triggered after that
+- Fix: changed `continue` to `posted = True; break` so an already-posted game is treated as handled and the alert is skipped
+- 2-line diff in `run_bot.py`, committed and pushed to `GolazoSteve/SFGCondensed-Original` on `main` (commit `ed30e39`)
+- This also resolves the "no-game alert fires on every run past cutoff" item from the outstanding list in March — same root cause
+
 ## Session: 2026-03-10 — Full Audit, Refactor & Deployment
 
 ### What this bot does
