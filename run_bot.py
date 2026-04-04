@@ -174,7 +174,8 @@ def main():
         print(f"🎬 Checking gamePk: {gamepk}")
         if not FORCE_POST and already_posted(gamepk):
             print("⏩ Already posted")
-            continue
+            posted = True
+            break
 
         title, url = find_condensed_game(gamepk)
         if url:
